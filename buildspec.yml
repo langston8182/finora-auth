@@ -1,0 +1,43 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+    commands:
+      - echo "Installing dependencies..."
+      - npm install
+  build:
+    commands:
+      - echo "Running build script..."
+      - npm run build
+  post_build:
+    commands:
+      - echo "Updating Lambda function code..."
+      - |
+        FUNCTION_NAME="finora-auth"
+        REGION="eu-west-3"
+        
+        # Mise à jour du code de la Lambda
+        aws lambda update-function-code \
+          --function-name $FUNCTION_NAME \
+          --region $REGION \
+          --zip-file fileb://build.zip
+
+        # Attendre la fin de la mise à jour avant de publier une version
+        echo "Waiting for Lambda update to complete..."
+        aws lambda wait function-updated --function-name $FUNCTION_NAME --region $REGION
+        
+        echo "Waiting for Lambda update to complete..."
+        aws lambda wait function-updated --function-name $FUNCTION_NAME --region $REGION
+
+        # Publier une nouvelle version après la mise à jour
+        echo "Publishing new Lambda version..."
+        VERSION=$(aws lambda publish-version --function-name $FUNCTION_NAME --region $REGION --query 'Version' --output text)
+        echo "New version published: $VERSION"
+
+artifacts:
+  type: zip
+  files:
+    - build.zip
+  discard-paths: yes
