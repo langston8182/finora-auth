@@ -1,26 +1,27 @@
-import { makePkcePair, randomState } from "../utils/crypto.mjs";
-import { setCookie, clearCookie, parseCookies } from "../utils/cookies.mjs";
-import { Tokens } from "../model/Tokens.mjs";
+import {makePkcePair, randomState} from "../utils/crypto.mjs";
+import {setCookie, clearCookie, parseCookies} from "../utils/cookies.mjs";
+import {Tokens} from "../model/Tokens.mjs";
 
 const {
     COGNITO_DOMAIN,
     CLIENT_ID,
     REDIRECT_URI,
     FRONT_URL,
-    COOKIE_DOMAIN
+    COOKIE_DOMAIN,
+    CLIENT_SECRET
 } = process.env;
 
-const COMMON_COOKIE = { sameSite: "Lax", secure: true, httpOnly: true, domain: COOKIE_DOMAIN };
+const COMMON_COOKIE = {sameSite: "None", secure: true, httpOnly: true, domain: COOKIE_DOMAIN};
 
 export class AuthService {
     static buildAuthorizeRedirect() {
-        const { codeVerifier, codeChallenge } = makePkcePair();
+        const {codeVerifier, codeChallenge} = makePkcePair();
         const state = randomState();
 
         const tmpCookie = setCookie(
             "auth_tmp",
-            JSON.stringify({ state, codeVerifier }),
-            { ...COMMON_COOKIE, maxAge: 300 }
+            JSON.stringify({state, codeVerifier}),
+            {...COMMON_COOKIE, maxAge: 300}
         );
 
         const url = new URL(`${COGNITO_DOMAIN}/oauth2/authorize`);
@@ -32,23 +33,36 @@ export class AuthService {
         url.searchParams.set("code_challenge_method", "S256");
         url.searchParams.set("code_challenge", codeChallenge);
 
-        return { authorizeUrl: url.toString(), tmpCookie };
+        return {authorizeUrl: url.toString(), tmpCookie};
     }
 
     /** @param {any} event */
     static async exchangeCodeForTokens(event) {
         const qs = event.queryStringParameters || {};
-        const { code, state } = qs;
+        const {code, state} = qs;
 
-        const cookies = parseCookies(event.headers);
-        if (!code || !state || !cookies.auth_tmp) {
-            return { error: "Invalid callback", status: 400 };
+        let cookieHeader = event.headers?.cookie || event.headers?.Cookie || "";
+        if (!cookieHeader && Array.isArray(event.cookies) && event.cookies.length) {
+            cookieHeader = event.cookies.join("; ");
+        }
+        const cookies = parseCookies({cookie: cookieHeader});
+        const tmpRaw = cookies.auth_tmp;
+        if (!code || !state || !tmpRaw) {
+            return {error: "Invalid callback", status: 400};
         }
 
         let tmp;
-        try { tmp = JSON.parse(cookies.auth_tmp); } catch {}
-        if (!tmp || tmp.state !== state) {
-            return { error: "State mismatch", status: 400 };
+        try {
+            tmp = JSON.parse(tmpRaw);
+        } catch {
+            try {
+                tmp = JSON.parse(decodeURIComponent(tmpRaw));
+            } catch {
+            }
+        }
+
+        if (!tmp || tmp.state !== state || !tmp.codeVerifier) {
+            return {error: "State mismatch or missing code_verifier", status: 400};
         }
 
         const form = new URLSearchParams();
@@ -58,36 +72,47 @@ export class AuthService {
         form.set("code", code);
         form.set("code_verifier", tmp.codeVerifier);
 
+        const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
         const res = await fetch(`${COGNITO_DOMAIN}/oauth2/token`, {
             method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": `Basic ${basic}`
+            },
             body: form
         });
 
         if (!res.ok) {
-            return { error: "Token exchange failed", details: await res.text(), status: 502 };
+            return {error: "Token exchange failed", details: await res.text(), status: 502};
         }
 
         const raw = await res.json();
         const tokens = new Tokens(raw);
 
         const cookiesOut = [
-            setCookie("access_token", tokens.accessToken, { ...COMMON_COOKIE, maxAge: tokens.expiresIn }),
-            setCookie("id_token", tokens.idToken,         { ...COMMON_COOKIE, maxAge: tokens.expiresIn }),
+            setCookie("access_token", tokens.accessToken, {...COMMON_COOKIE, maxAge: tokens.expiresIn}),
+            setCookie("id_token", tokens.idToken, {...COMMON_COOKIE, maxAge: tokens.expiresIn}),
             clearCookie("auth_tmp", COMMON_COOKIE)
         ];
         if (tokens.refreshToken) {
-            cookiesOut.push(setCookie("refresh_token", tokens.refreshToken, { ...COMMON_COOKIE, maxAge: 60 * 60 * 24 * 30 }));
+            cookiesOut.push(setCookie("refresh_token", tokens.refreshToken, {
+                ...COMMON_COOKIE,
+                maxAge: 60 * 60 * 24 * 30
+            }));
         }
 
-        return { tokens, cookiesOut, redirectTo: FRONT_URL, status: 302 };
+        return {tokens, cookiesOut, redirectTo: FRONT_URL, status: 302};
     }
 
     /** @param {any} event */
     static async refresh(event) {
-        const cookies = parseCookies(event.headers);
+        let cookieHeader = event.headers?.cookie || event.headers?.Cookie || "";
+        if (!cookieHeader && Array.isArray(event.cookies) && event.cookies.length) {
+            cookieHeader = event.cookies.join("; ");
+        }
+        const cookies = parseCookies({ cookie: cookieHeader });
         const refresh = cookies.refresh_token;
-        if (!refresh) return { error: "Missing refresh token", status: 401 };
+        if (!refresh) return {error: "Missing refresh token", status: 401};
 
         const form = new URLSearchParams();
         form.set("grant_type", "refresh_token");
@@ -96,25 +121,25 @@ export class AuthService {
 
         const res = await fetch(`${COGNITO_DOMAIN}/oauth2/token`, {
             method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            headers: {"Content-Type": "application/x-www-form-urlencoded"},
             body: form
         });
 
         if (!res.ok) {
-            return { error: "Refresh failed", details: await res.text(), status: 401 };
+            return {error: "Refresh failed", details: await res.text(), status: 401};
         }
 
         const raw = await res.json();
         const tokens = new Tokens(raw);
 
         const cookiesOut = [
-            setCookie("access_token", tokens.accessToken, { ...COMMON_COOKIE, maxAge: tokens.expiresIn })
+            setCookie("access_token", tokens.accessToken, {...COMMON_COOKIE, maxAge: tokens.expiresIn})
         ];
         if (tokens.idToken) {
-            cookiesOut.push(setCookie("id_token", tokens.idToken, { ...COMMON_COOKIE, maxAge: tokens.expiresIn }));
+            cookiesOut.push(setCookie("id_token", tokens.idToken, {...COMMON_COOKIE, maxAge: tokens.expiresIn}));
         }
 
-        return { ok: true, cookiesOut, status: 200 };
+        return {ok: true, cookiesOut, status: 200};
     }
 
     static buildLogoutRedirect() {
@@ -129,6 +154,6 @@ export class AuthService {
             clearCookie("auth_tmp", COMMON_COOKIE)
         ];
 
-        return { logoutUrl: url.toString(), cookies };
+        return {logoutUrl: url.toString(), cookies};
     }
 }

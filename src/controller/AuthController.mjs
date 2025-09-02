@@ -1,4 +1,5 @@
 import { AuthService } from "../service/AuthService.mjs";
+import { UserService } from "../service/UserService.mjs";
 import { redirect, json } from "../utils/http.mjs";
 
 export class AuthController {
@@ -28,5 +29,14 @@ export class AuthController {
     static async logout() {
         const { logoutUrl, cookies } = AuthService.buildLogoutRedirect();
         return redirect(logoutUrl, cookies);
+    }
+
+    static async me(event) {
+        try {
+            const profile = await UserService.meFromCookies(event);
+            return json(200, { authenticated: true, profile });
+        } catch (e) {
+            return json(401, { authenticated: false, error: e.message || "invalid_token" });
+        }
     }
 }

@@ -37,12 +37,11 @@ export const handler = async (event) => {
             return AuthController.userinfo(event);
         }
 
-        return json(404, { error: "Not Found", route: path, method });
-    }
+        if (method === "GET" && sub === "me") {
+            return AuthController.me(event);
+        }
 
-    // === Routes protégées (derrière ton Lambda Authorizer côté API Gateway) ===
-    if (method === "GET" && path === "me") {
-        return ProtectedController.me(event);
+        return json(404, { error: "Not Found", route: path, method });
     }
 
     return json(404, { error: "Not Found", route: path, method });
