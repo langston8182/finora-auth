@@ -1,19 +1,49 @@
+// index.mjs
 import { AuthController } from "./controller/AuthController.mjs";
-import { ProtectedController } from "./controller/ProtectedController.mjs";
 
-/**
- * Mappe tes routes API Gateway vers ces handlers :
- *  - GET  /auth/login     -> login
- *  - GET  /auth/callback  -> callback
- *  - POST /auth/refresh   -> refresh
- *  - GET  /auth/logout    -> logout
- *  - GET  /me             -> me
- *  - GET  /api/hello      -> hello
- */
+function json(status, body) {
+    return {
+        statusCode: status,
+        headers: { "Content-Type": "application/json", ...corsBase },
+        body: JSON.stringify(body),
+    };
+}
 
-export const login = async () => AuthController.login();
-export const callback = async (event) => AuthController.callback(event);
-export const refresh = async (event) => AuthController.refresh(event);
-export const logout = async () => AuthController.logout();
-export const me = async (event) => ProtectedController.me(event);
-export const hello = async (event) => ProtectedController.hello(event);
+export const handler = async (event) => {
+    const method =
+        (event.requestContext?.http?.method || event.httpMethod || "GET").toUpperCase();
+    const rawPath =
+        event.requestContext?.http?.path || event.rawPath || event.path || "/";
+    const path = rawPath.replace(/^\/+|\/+$/g, ""); // retire les / de début/fin
+
+    // === Routes AUTH ===
+    if (path.startsWith("auth/")) {
+        const sub = path.slice(5); // après "auth/"
+
+        if (method === "GET" && sub === "login") {
+            return AuthController.login();
+        }
+        if (method === "GET" && sub === "callback") {
+            return AuthController.callback(event);
+        }
+        if (method === "POST" && sub === "refresh") {
+            return AuthController.refresh(event);
+        }
+        if (method === "GET" && (sub === "logout" || sub === "signout")) {
+            return AuthController.logout();
+        }
+        // Si tu as un /auth/userinfo (POST) dans ton controller:
+        if (method === "POST" && sub === "userinfo" && AuthController.userinfo) {
+            return AuthController.userinfo(event);
+        }
+
+        return json(404, { error: "Not Found", route: path, method });
+    }
+
+    // === Routes protégées (derrière ton Lambda Authorizer côté API Gateway) ===
+    if (method === "GET" && path === "me") {
+        return ProtectedController.me(event);
+    }
+
+    return json(404, { error: "Not Found", route: path, method });
+};
