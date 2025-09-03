@@ -6,12 +6,32 @@ const {
     COGNITO_DOMAIN,
     CLIENT_ID,
     REDIRECT_URI,
-    FRONT_URL,
     COOKIE_DOMAIN,
-    CLIENT_SECRET
+    CLIENT_SECRET,
+    ENVIRONMENT
 } = process.env;
 
 const COMMON_COOKIE = {sameSite: "None", secure: true, httpOnly: true, domain: COOKIE_DOMAIN};
+
+const UI_ORIGIN_BY_ENV = {
+    localhost: "http://localhost:5173",
+    preprod:   "https://finora-ui-preprod.cyrilmarchive.com",
+    prod:      "https://finora.cyrilmarchive.com",
+};
+
+function resolveUiOrigin() {
+    const env = (ENVIRONMENT || "").toLowerCase();
+    return UI_ORIGIN_BY_ENV[env] || UI_ORIGIN_BY_ENV.localhost;
+}
+
+function resolveFrontUrl() {
+    let path = "/forecast";
+    return `${resolveUiOrigin()}${path}`;
+}
+
+function resolveLogoutUrl() {
+    return `${resolveUiOrigin()}/`;
+}
 
 export class AuthService {
     static buildAuthorizeRedirect() {
@@ -101,7 +121,7 @@ export class AuthService {
             }));
         }
 
-        return {tokens, cookiesOut, redirectTo: FRONT_URL, status: 302};
+        return {tokens, cookiesOut, redirectTo: resolveFrontUrl(), status: 302};
     }
 
     /** @param {any} event */
@@ -110,7 +130,7 @@ export class AuthService {
         if (!cookieHeader && Array.isArray(event.cookies) && event.cookies.length) {
             cookieHeader = event.cookies.join("; ");
         }
-        const cookies = parseCookies({ cookie: cookieHeader });
+        const cookies = parseCookies({cookie: cookieHeader});
         const refresh = cookies.refresh_token;
         if (!refresh) return {error: "Missing refresh token", status: 401};
 
@@ -145,7 +165,7 @@ export class AuthService {
     static buildLogoutRedirect() {
         const url = new URL(`${COGNITO_DOMAIN}/logout`);
         url.searchParams.set("client_id", CLIENT_ID);
-        url.searchParams.set("logout_uri", process.env.LOGOUT_REDIRECT || process.env.FRONT_URL);
+        url.searchParams.set("logout_uri", resolveLogoutUrl());
 
         const cookies = [
             clearCookie("access_token", COMMON_COOKIE),
