@@ -24,45 +24,6 @@ phases:
           --region $REGION \
           --zip-file fileb://build.zip
 
-        # Attendre la fin de la mise à jour avant de publier une version
-        echo "Waiting for Lambda update to complete..."
-        aws lambda wait function-updated --function-name $FUNCTION_NAME --region $REGION
-        
-        # Récupérer les variables d'environnement existantes
-        EXISTING_ENV=$(aws lambda get-function-configuration \
-        --function-name $FUNCTION_NAME \
-        --region $REGION \
-        --query 'Environment.Variables' \
-        --output json)
-        
-        # Ajouter/modifier la variable ENVIRONMENT
-        UPDATED_ENV=$(echo $EXISTING_ENV | jq '. + {"ENVIRONMENT": "preprod"}')
-        
-        # Mettre à jour la variable d'environnement ENVIRONMENT sur la future version LATEST - 1
-        echo "Updating Lambda environment variables..."
-        aws lambda update-function-configuration \
-        --function-name $FUNCTION_NAME \
-        --region $REGION \
-        --environment "{\"Variables\":$UPDATED_ENV}"
-        
-        echo "Waiting for Lambda update to complete..."
-        aws lambda wait function-updated --function-name $FUNCTION_NAME --region $REGION
-
-        # Publier une nouvelle version après la mise à jour
-        echo "Publishing new Lambda version..."
-        VERSION=$(aws lambda publish-version --function-name $FUNCTION_NAME --region $REGION --query 'Version' --output text)
-        echo "New version published: $VERSION"
-        
-        # Ajouter/modifier la variable ENVIRONMENT
-        UPDATED_ENV=$(echo $EXISTING_ENV | jq '. + {"ENVIRONMENT": "localhost"}')
-        
-        # Mettre à jour la variable d'environnement ENVIRONMENT sur la version LATEST
-        echo "Updating Lambda environment variables..."
-        aws lambda update-function-configuration \
-        --function-name $FUNCTION_NAME \
-        --region $REGION \
-        --environment "{\"Variables\":$UPDATED_ENV}"
-
 artifacts:
   type: zip
   files:
