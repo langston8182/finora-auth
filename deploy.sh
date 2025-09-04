@@ -55,28 +55,33 @@ echo "Published version: $NEW_VERSION"
 # 3) Mettre à jour l’alias correspondant (preprod ou prod)
 ALIAS_NAME="$ENVIRONMENT"   # alias 'preprod' ou 'prod'
 echo "Pointing alias '$ALIAS_NAME' to version $NEW_VERSION..."
-# Try to update alias; if it doesn't exist, create it
+# Temporarily disable -e to capture non-zero exit from update-alias without exiting
 set +e
-aws lambda update-alias \
+ALIAS_UPDATE_OUTPUT=$(aws lambda update-alias \
   --region "$REGION" \
   --function-name "$FUNCTION_NAME" \
   --name "$ALIAS_NAME" \
-  --function-version "$NEW_VERSION" \
-  >/dev/null 2>&1
+  --function-version "$NEW_VERSION" 2>&1)
 UPDATE_RC=$?
 set -e
 
 if [ $UPDATE_RC -eq 0 ]; then
   echo "Alias '$ALIAS_NAME' updated to version $NEW_VERSION."
 else
-  echo "Alias '$ALIAS_NAME' not found or update failed (rc=$UPDATE_RC). Creating it..."
-  aws lambda create-alias \
-    --region "$REGION" \
-    --function-name "$FUNCTION_NAME" \
-    --name "$ALIAS_NAME" \
-    --function-version "$NEW_VERSION" \
-    >/dev/null
-  echo "Alias '$ALIAS_NAME' created at version $NEW_VERSION."
+  if echo "$ALIAS_UPDATE_OUTPUT" | grep -q "ResourceNotFoundException"; then
+    echo "Alias '$ALIAS_NAME' not found. Creating it..."
+    aws lambda create-alias \
+      --region "$REGION" \
+      --function-name "$FUNCTION_NAME" \
+      --name "$ALIAS_NAME" \
+      --function-version "$NEW_VERSION" \
+      >/dev/null
+    echo "Alias '$ALIAS_NAME' created at version $NEW_VERSION."
+  else
+    echo "Failed to update alias '$ALIAS_NAME' (rc=$UPDATE_RC):"
+    echo "$ALIAS_UPDATE_OUTPUT"
+    exit $UPDATE_RC
+  fi
 fi
 
 # 4) **RESTAURe $LATEST à localhost**
@@ -88,7 +93,7 @@ EXISTING_AFTER=$(aws lambda get-function-configuration \
   --query 'Environment.Variables' \
   --output json)
 
-UPDATED_ENV_LOCAL=$(echo "$EXISTING_AFTER" | jq --arg env "localhost" '. + {ENVIRONMENT: $env}' | jq -c '.')
+UPDATED_ENV_LOCAL=$(printf '%s' "${EXISTING_AFTER:-null}" | jq -c --arg env "localhost" '(. // {}) + {ENVIRONMENT: $env}')
 aws lambda update-function-configuration \
   --function-name "$FUNCTION_NAME" \
   --region "$REGION" \
